@@ -1,4 +1,5 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { supabase } from "./lib/supabase.js";
 import { Plus, Search, Download, Upload, Edit3, Trash2, ChevronDown, ChevronUp, ExternalLink, Calendar, DollarSign, User, Building2, FileText, ArrowRight, ArrowLeft, X, BarChart3, Zap, ClipboardPaste, Sparkles, Check, AlertCircle } from "lucide-react";
 
 // ═══════════════════════════════════════════════════════════════
@@ -876,7 +877,9 @@ function Dashboard({ apps }) {
 // ═══════════════════════════════════════════════════════════════
 
 export default function JobCRM() {
-  const [apps, setApps] = useState(SAMPLE_DATA);
+  const [apps, setApps] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [modal, setModal] = useState(null);
   const [quickAdd, setQuickAdd] = useState(false);
   const [search, setSearch] = useState("");
@@ -884,17 +887,62 @@ export default function JobCRM() {
   const [showDashboard, setShowDashboard] = useState(true);
   const [filterStage, setFilterStage] = useState("all");
 
-  const saveApp = (app) => {
+  // ── Cargar datos desde Supabase al montar ──
+  useEffect(() => {
+    const fetchApps = async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("applications")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) {
+        setError("No se pudo conectar con la base de datos. Revisá las credenciales.");
+        console.error(error);
+      } else {
+        setApps(data || []);
+      }
+      setLoading(false);
+    };
+    fetchApps();
+  }, []);
+
+  // ── Guardar (crear o actualizar) ──
+  const saveApp = async (app) => {
+    const isNew = !apps.find(a => a.id === app.id);
+    const record = isNew ? { ...app, id: app.id || uid() } : app;
+    const { data, error } = await supabase
+      .from("applications")
+      .upsert(record)
+      .select()
+      .single();
+    if (error) {
+      alert("Error al guardar: " + error.message);
+      return;
+    }
     setApps(prev => {
-      const idx = prev.findIndex(a => a.id === app.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = app; return next; }
-      return [...prev, app];
+      const idx = prev.findIndex(a => a.id === data.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = data; return next; }
+      return [data, ...prev];
     });
     setModal(null);
   };
 
-  const deleteApp = (id) => setApps(prev => prev.filter(a => a.id !== id));
-  const moveApp = (id, newStage) => setApps(prev => prev.map(a => a.id === id ? { ...a, etapa: newStage } : a));
+  // ── Eliminar ──
+  const deleteApp = async (id) => {
+    const { error } = await supabase.from("applications").delete().eq("id", id);
+    if (error) { alert("Error al eliminar: " + error.message); return; }
+    setApps(prev => prev.filter(a => a.id !== id));
+  };
+
+  // ── Mover etapa ──
+  const moveApp = async (id, newStage) => {
+    const { error } = await supabase
+      .from("applications")
+      .update({ etapa: newStage })
+      .eq("id", id);
+    if (error) { alert("Error al mover: " + error.message); return; }
+    setApps(prev => prev.map(a => a.id === id ? { ...a, etapa: newStage } : a));
+  };
 
   // Quick Add result handler
   const handleQuickAddResult = (data, addDirectly) => {
@@ -936,6 +984,26 @@ export default function JobCRM() {
   }, [apps, search, filterStage]);
 
   const kanbanStages = STAGES.filter(s => !["rechazada", "descartada"].includes(s.id) || filtered.some(a => a.etapa === s.id));
+
+  // ── Pantalla de carga / error ──
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-50">
+      <div className="text-center">
+        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-gray-500 text-sm">Cargando postulaciones…</p>
+      </div>
+    </div>
+  );
+
+  if (error) return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-50">
+      <div className="text-center max-w-sm px-6 py-8 bg-white rounded-2xl shadow border border-red-100">
+        <AlertCircle size={36} className="text-red-400 mx-auto mb-3" />
+        <p className="font-semibold text-gray-700 mb-1">Error de conexión</p>
+        <p className="text-sm text-gray-400">{error}</p>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-50">
